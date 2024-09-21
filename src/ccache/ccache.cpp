@@ -261,7 +261,7 @@ init_hash_debug(Context& ctx,
 }
 
 #ifndef _WIN32
-std::string
+fs::path
 follow_symlinks(const fs::path& path)
 {
   // Follow symlinks to the real compiler to learn its name. We're not using
@@ -306,18 +306,56 @@ do_guess_compiler(const fs::path& path)
   }
 }
 
+#ifndef _WIN32
+static CompilerType
+do_guess_compiler_hardlinkcompare(const fs::path& path)
+{
+  fs::path filename = path.filename();
+  std::vector<std::pair<fs::path, CompilerType>> other_filenames;
+  if (filename == "cc") {
+    other_filenames = {
+      {"clang", CompilerType::clang},
+      {"gcc", CompilerType::gcc},
+    };
+  } else if (filename == "c++") {
+    other_filenames = {
+      {"clang++", CompilerType::clang},
+      {"g++", CompilerType::gcc},
+    };
+  }
+
+  DirEntry dirent(path);
+  fs::path other_path = path;
+  for (auto& [other_filename, ctype] : other_filenames) {
+    other_path.replace_filename(other_filename);
+    if (dirent.same_inode_as(DirEntry(other_path))) {
+      return ctype;
+    }
+  }
+
+  return CompilerType::other;
+}
+#endif
+
 CompilerType
 guess_compiler(const fs::path& path)
 {
+  // guess based on name
   CompilerType type = do_guess_compiler(path);
 #ifdef _WIN32
   return type;
 #else
-  if (type == CompilerType::other) {
-    return do_guess_compiler(follow_symlinks(path));
-  } else {
+  if (type != CompilerType::other) {
     return type;
   }
+  // try again with symlink target
+  fs::path path_nosymlink = follow_symlinks(path);
+  type = do_guess_compiler(path_nosymlink);
+  if (type != CompilerType::other) {
+    return type;
+  }
+  // try again by guesing hardlink
+  return do_guess_compiler_hardlinkcompare(path_nosymlink);
 #endif
 }
 
